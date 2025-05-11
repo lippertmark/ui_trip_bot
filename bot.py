@@ -11,6 +11,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from config import *
+from aiogram.client.session.aiohttp import AiohttpSession
+session = AiohttpSession(proxy='http://proxy.server:3128')
 
 # --- НАСТРОЙКИ ---
 TASKS_FILE = Path("tasks.json")
@@ -19,7 +21,7 @@ TASKS_FILE = Path("tasks.json")
 logging.basicConfig(level=logging.INFO)
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=API_TOKEN, session=session)
 dp = Dispatcher(storage=MemoryStorage())
 
 # --- ЗАГРУЗКА ЗАДАНИЙ ---
@@ -41,6 +43,25 @@ class Submission(StatesGroup):
 
 class AdminStates(StatesGroup):
     waiting_for_task_text = State()
+
+# --- ДОБАВЛЕНИЕ ЗАДАНИЯ (только для администратора) ---
+@dp.message(Command("add_task"))
+async def add_task_command(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+    await message.answer("✏️ Введите текст нового задания:")
+    await state.set_state(AdminStates.waiting_for_task_text)
+
+@dp.message(AdminStates.waiting_for_task_text)
+async def receive_task_text(message: Message, state: FSMContext):
+    new_task_text = message.text.strip()
+    new_id = str(int(max(TASKS.keys(), default="0")) + 1)
+    TASKS[new_id] = new_task_text
+    save_tasks()
+    await bot.send_message(chat_id=CHANNEL_ID, text=f"Новое задание! 🧳\n День {new_id}\n\n{new_task_text}")
+    await message.answer(f"✅ Задание добавлено!\nID: {new_id}\nТекст: {new_task_text}")
+    await state.clear()
 
 # --- ХРАНИЛИЩЕ для media_group ---
 media_groups = defaultdict(list)
@@ -88,24 +109,6 @@ async def handle_album(message: Message):
 
         await bot.send_media_group(chat_id=CHANNEL_ID, media=photos)
         await message.answer("✅ Фото успешно отправлены в канал.")
-
-# --- ДОБАВЛЕНИЕ ЗАДАНИЯ (только для администратора) ---
-@dp.message(Command("add_task"))
-async def add_task_command(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("⛔ У вас нет доступа к этой команде.")
-        return
-    await message.answer("✏️ Введите текст нового задания:")
-    await state.set_state(AdminStates.waiting_for_task_text)
-
-@dp.message(AdminStates.waiting_for_task_text)
-async def receive_task_text(message: Message, state: FSMContext):
-    new_task_text = message.text.strip()
-    new_id = str(int(max(TASKS.keys(), default="0")) + 1)
-    TASKS[new_id] = new_task_text
-    save_tasks()
-    await message.answer(f"✅ Задание добавлено!\nID: {new_id}\nТекст: {new_task_text}")
-    await state.clear()
 
 # --- ЗАПУСК ---
 if __name__ == "__main__":
